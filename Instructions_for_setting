@@ -1,0 +1,10 @@
+To run python programs in Ubuntu along with OpenCV: (run in iPython)
+
+https://www.learnopencv.com/install-opencv3-on-ubuntu/
+
+To run a script in ipython:
+Change the working directory and then call the script
+
+import os
+filepath = os.chdir(os.getcwd())
+%run python_scripy.py

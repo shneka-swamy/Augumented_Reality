@@ -12,7 +12,7 @@ MARKER_HEIGHT = 8.125
 MARKER_WIDTH = 10.625
 
 # This function draws a prism
-def draw_prism(img, length, width, height, rvec, tvec, K, dist_coeff):
+def draw_prism(img, length, width, height, rvec, tvec, K, dist_coeff, increment):
 
     l = length
     w = width
@@ -20,19 +20,27 @@ def draw_prism(img, length, width, height, rvec, tvec, K, dist_coeff):
 
     line_type = 8
 
+    
+    tvec = tvec + [[0],[increment],[0]]
+
     P_prism = np.array([[-w, -l, 0], [-w, +l, 0], [+w, +l, 0], 
-                        [+w, -l, 0], [0, 0, h] ])
+                        [+w, -l, 0], [0, 0, h]])
 
     p, J = cv2.projectPoints(P_prism, rvec, tvec, K, dist_coeff)
     p = p.reshape(-1,2)
     p = p.astype(np.int32)
 
+    triangle = np.array([p[0], p[1], p[4]])
+
     edges = [(0,1), (1,2), (2,3), (3,0),
              (0,4), (1,4), (2,4), (3,4)]
+
 
     for i,j in edges:
         cv2.line(img, tuple(p[i]), tuple(p[j]), color=(0, 0, 255), thickness=2)
 
+
+    cv2.fillPoly(img, [triangle] , color = (255,0,255))
 
 def incremental_tracking(bgr_image_input, gray_image, image_pts):
     new_gray = cv2.cvtColor(src=bgr_image_input, code=cv2.COLOR_BGR2GRAY)
@@ -53,6 +61,10 @@ def find_object(desc1, kp1, detector, marker_image):
     # Initialize image capture from camera.
     video_capture = cv2.VideoCapture(CAMERA_NUMBER)  # Open video capture object
     is_ok, bgr_image_input = video_capture.read()  # Make sure we can read video
+
+    h = bgr_image_input.shape[0]
+    w = bgr_image_input.shape[1]
+    
     if not is_ok:
         print("Cannot read video source")
         sys.exit()
@@ -67,7 +79,26 @@ def find_object(desc1, kp1, detector, marker_image):
                     [0, 0, 1.0]])
 
     set_incremental_tracking = False
-    
+
+    increment = 0
+
+
+    # Try to create a new video writer so we can record a video.
+    try:
+        # Other types of video formats:
+        #   *.avi   Use VideoWriter_fourcc('D', 'I', 'V', 'X')
+        #   *.wmv   Use VideoWriter_fourcc('W', 'M', 'V', '2')
+        #   *.mp4   Use VideoWriter_fourcc('M', 'P', '4', '2')
+        # See http://www.fourcc.org/codecs.php for more codecs.
+        fourcc = cv2.VideoWriter_fourcc('M', 'J', 'P', 'G')
+        fname = "myvideo.avi"
+        fps = 30.0      # frames per second
+        videoWriter = cv2.VideoWriter(fname, fourcc, fps, (w, h))
+    except:
+        print("Error: can't create output video: %s" % fname)
+        sys.exit()
+
+
     while True:
         is_ok, bgr_image_input = video_capture.read()
         if not is_ok:
@@ -75,7 +106,8 @@ def find_object(desc1, kp1, detector, marker_image):
 
         # Set this to true if at any point in the processing we can't find the marker.
         unable_to_find_marker = False
-
+        
+        videoWriter.write(bgr_image_input)
 
         if set_incremental_tracking == False:
             image_input_gray = cv2.cvtColor(src=bgr_image_input, code=cv2.COLOR_BGR2GRAY)
@@ -87,7 +119,7 @@ def find_object(desc1, kp1, detector, marker_image):
             new_pts = incremental_tracking(bgr_image_input, gray_image, image_pts)
 
         # Match descriptors to marker image.
-        if not unable_to_find_marker and set_incremental_tracking == False:
+        if not unable_to_find_marker:
             matcher = cv2.BFMatcher_create(normType=cv2.NORM_L2, crossCheck=False)
             matches = matcher.knnMatch(desc1, desc2, k=2)  # Find closest 2
             good_matches = []
@@ -96,6 +128,7 @@ def find_object(desc1, kp1, detector, marker_image):
                     good_matches.append(m[0])
             if len(good_matches) < MIN_MATCHES_FOR_DETECTION:  # Higher threshold - fewer false detections
                 unable_to_find_marker = True
+                set_incremental_tracking = False
 
         # Fit homography.
         if not unable_to_find_marker:
@@ -115,7 +148,7 @@ def find_object(desc1, kp1, detector, marker_image):
                 
                 if set_incremental_tracking == True:
                     set_incremental_tracking = False
-
+ 
                 unable_to_find_marker = True
 
         # Draw marker border on the image.
@@ -140,7 +173,7 @@ def find_object(desc1, kp1, detector, marker_image):
                                     [MARKER_WIDTH / 2, MARKER_HEIGHT / 2, 0],
                                     [MARKER_WIDTH / 2, -MARKER_HEIGHT / 2, 0]])
             pose_ok, rvec, tvec = cv2.solvePnP(marker_3d, warped_corners, K, dist_coeff)
-            
+
             if pose_ok:
                 if set_incremental_tracking == False:
                     
@@ -148,14 +181,18 @@ def find_object(desc1, kp1, detector, marker_image):
                     inverse_Hmat = np.linalg.inv(Hmat)
                 
                     gray_image = image_input_gray
+                    
                     image_pts = cv2.goodFeaturesToTrack(image=gray_image, maxCorners=100,
-                            qualityLevel=0.01, minDistance=20, blockSize=11)
+                           qualityLevel=0.01, minDistance=20, blockSize=11)
                     image_pts = np.squeeze(image_pts)       
 
                     src_pts = cv2.perspectiveTransform(image_pts.reshape(-1, 1, 2), inverse_Hmat)
 
-                else:
-                    draw_prism(bgr_image_input, 1 , 0.75 , -2, rvec, tvec, K, dist_coeff)
+                elif set_incremental_tracking == True:
+                    increment += 0.05
+                    draw_prism(bgr_image_input, 1 , 0.75 , -2, rvec, tvec, K, dist_coeff, increment)
+                    #length = int(video_capture.get(cv2.CAP_PROP_FPS))
+                    #print(length)
 
         # Show image and wait for xx msec (0 = wait till keypress).
         cv2.imshow("Input image", bgr_image_input)
@@ -164,6 +201,7 @@ def find_object(desc1, kp1, detector, marker_image):
             break  # Quit on ESC or q
     
     video_capture.release()
+    videoWriter.release()
     cv2.destroyAllWindows()
 
 
@@ -190,7 +228,7 @@ def detect_object():
 
     
 def main():
-    
+
     # Get image detection done.
     [kp, desc, detector, marker_image] = detect_object()
     find_object(desc, kp, detector, marker_image)
